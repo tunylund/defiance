@@ -1,0 +1,26 @@
+{
+  "name": "defiance",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "private": true,
+  "devDependencies": {
+    "tslint": "^5.11.0",
+    "typescript": "^3.0.1"
+  },
+  "scripts": {
+    "rename-modules": "for f in `find dist -name '*.js'`; do mv $f `echo $f | sed -e 's/\\.js/\\.mjs/'`; done;",
+    "rename-imports": "for f in `find dist -name '*.js'`; do echo \"fixing imports on $f\" && sed -i '' -e \"s/from '\\(.*\\)'/from '\\1.mjs'/g\" $f; done;",
+    "clean": "echo '\ncleaning...' && rm -rf dist/*",
+    "compile": "echo '\ncompiling...' && tsc && npm run rename-imports && npm run rename-modules && npm run lint",
+    "build": "npm run clean && npm run compile",
+    "lint": "tslint -p . --fix",
+    "dev": "http-server -c-1",
+    "perf-test": "npm run build && node --experimental-modules ./dist/lib/astar-test.mjs"
+  },
+  "author": "Tuomas Nylund",
+  "license": "MIT",
+  "dependencies": {
+    "tiny-game-engine": "file:../tiny-game-engine"
+  }
+}
