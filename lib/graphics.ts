@@ -3,7 +3,7 @@ import { draw } from './../node_modules/tiny-game-engine/src/draw'
 import { El, vectorTo } from './../node_modules/tiny-game-engine/src/el'
 import { gridStep, gridTileCenterAt, snapToGridTileCenter } from './../node_modules/tiny-game-engine/src/grid'
 import { position } from './../node_modules/tiny-game-engine/src/position'
-import { negone, one, unit, vector2, xyz, XYZ } from './../node_modules/tiny-game-engine/src/xyz'
+import { half, negone, one, unit, vector2, xyz, XYZ } from './../node_modules/tiny-game-engine/src/xyz'
 import {
   BaseEl,
   BeamEl,
@@ -13,14 +13,16 @@ import {
   InactiveTowerEl,
   ProjectileTowerEl,
   randomBetween,
+  range,
   SpawnPointEl,
   towerDesigns,
+  TowerEl,
 } from './main'
 
 const SATURATION = 44
 const LIGHTING = 66
-const BLACK = xyzAsHsla(xyz(), 1)
-const WHITE = xyzAsHsla(xyz(0, 0, 100), 1)
+const BLACK = xyz()
+const WHITE = (a = 1) => xyzAsHsla(xyz(0, 0, 100), a)
 
 const topColor = xyz(randomBetween(0, 360), SATURATION, LIGHTING)
 const bottomColor = topColor.add(xyz(randomBetween(30, 120)))
@@ -29,14 +31,17 @@ const radiusColor = xyzAsHsla(topColor.sub(xyz(50, 0, 50)), 0.15)
 export function drawGame(game: Game, controls: Controls, gameTime: number) {
   draw((ctx, cw, ch) => backgroundDrawing(ctx, cw, ch, game), position(), xyz())
 
+  draw((ctx) => {
+    game.blood.map((b) => circle(ctx, b, 0.5, xyzAsHsla(xyz(0, SATURATION, LIGHTING - 20), 0.5)))
+  }, position(), xyz())
+
   game.spawnPoints.map((e) => draw((ctx) => spawnPointDrawing(ctx, e), e.pos, e.dim))
 
   draw((ctx, cw, ch) => {
-    game.projectileTowerEls.map((t) => pipeworksDrawing(ctx, cw, ch, t.path, gameTime))
-    game.beamTowerEls.map((t) => pipeworksDrawing(ctx, cw, ch, t.path, gameTime))
+    game.projectileTowerEls.map((t) => pipeworksDrawing(ctx, cw, ch, t, gameTime))
+    game.beamTowerEls.map((t) => pipeworksDrawing(ctx, cw, ch, t, gameTime))
   }, position(), xyz())
 
-  game.obstacles.map((o) => draw((ctx, cw, ch) => obstacleDrawing(ctx, ch, o), o.pos, o.dim))
   game.projectileTowerEls.map((e) => draw((ctx) => e.drawing(ctx, e), e.pos, e.dim))
   game.beamTowerEls.map((e) => draw((ctx) => e.drawing(ctx, e), e.pos, e.dim))
   game.inactiveTowerEls.map((e) => draw((ctx) => e.drawing(ctx, e), e.pos, e.dim))
@@ -45,6 +50,11 @@ export function drawGame(game: Game, controls: Controls, gameTime: number) {
   game.bullets.map((e) => draw((ctx, cw, ch) => e.drawing(ctx, cw, ch, e, gameTime, game), e.pos, e.dim))
   game.beams.map((e) => draw((ctx) => e.drawing(ctx, e), e.start.pos, e.start.dim))
   game.effects.map((e) => draw((ctx, cw, ch) => e.drawing(ctx, cw, ch, e, gameTime, game), e.pos, e.dim))
+
+  draw((ctx, cw, ch) => {
+    game.obstacles.map((o) => rectangle(ctx, o.pos.cor, o.dim.add(unit(2)), xyzAsHsla(xyz(), 0.5)))
+    game.obstacles.map((o) => obstacleDrawing(ctx, ch, o))
+  }, position(), xyz())
 
   draw((ctx, cw, ch) => {
     const moneyDim = xyz(game.money, 2),
@@ -59,7 +69,7 @@ export function drawGame(game: Game, controls: Controls, gameTime: number) {
 
     rectangle(ctx, snapToGridTileCenter(game.grid, controls.cor), game.grid.tileSize, xyzAsHsla(xyz(0, 0, 0), 0.4))
 
-    ctx.fillStyle = WHITE
+    ctx.fillStyle = WHITE()
     Object.values(towerDesigns).map((towerDesign, i) => {
       const count = Math.floor(game.money / towerDesign.cost)
       const name = towerDesign.drawing.name.replace('Drawing', '')
@@ -93,7 +103,7 @@ function backgroundDrawing(ctx: CanvasRenderingContext2D, cw: number, ch: number
 
 export function pelletTowerDrawing(ctx: CanvasRenderingContext2D, tower: ProjectileTowerEl) {
   circle(ctx, tower.pos.cor, tower.radius, undefined, radiusColor)
-  circle(ctx, tower.pos.cor, tower.dim.x2 - 2, xyzAsHsla((xyz(0, 0, 100)), tower.energy / 100), WHITE)
+  circle(ctx, tower.pos.cor, tower.dim.x2 - 2, WHITE(tower.energy / tower.maxEnergy), WHITE())
   line(ctx, [tower.pos.cor, tower.target ?
     tower.pos.cor.add(vectorTo(tower, tower.target, tower.dim.x)) :
     tower.pos.cor], 'rgba(255, 255, 155, 1)')
@@ -101,7 +111,7 @@ export function pelletTowerDrawing(ctx: CanvasRenderingContext2D, tower: Project
 
 export function laserTowerDrawing(ctx: CanvasRenderingContext2D, tower: ProjectileTowerEl) {
   circle(ctx, tower.pos.cor, tower.radius, undefined, radiusColor)
-  rectangle(ctx, tower.pos.cor, tower.dim.sub(unit(2)), xyzAsHsla((xyz(0, 0, 100)), tower.energy / 100), WHITE)
+  rectangle(ctx, tower.pos.cor, tower.dim.sub(unit(2)), WHITE(tower.energy / tower.maxEnergy), WHITE())
   line(ctx, [tower.pos.cor, tower.target ?
     tower.pos.cor.add(vectorTo(tower, tower.target, tower.dim.x)) :
     tower.pos.cor], 'rgba(155, 255, 155, 1)')
@@ -109,18 +119,22 @@ export function laserTowerDrawing(ctx: CanvasRenderingContext2D, tower: Projecti
 
 export function sparkTowerDrawing(ctx: CanvasRenderingContext2D, tower: BeamTowerEl) {
   circle(ctx, tower.pos.cor, tower.radius, undefined, radiusColor)
-  rectangle(ctx, tower.pos.cor, tower.dim.sub(unit(2)), xyzAsHsla(xyz(0, 0, 90), tower.energy / 100), WHITE)
-  const d = tower.dim.x2,
+  rectangle(ctx, tower.pos.cor, tower.dim.sub(unit(2)), WHITE(tower.energy / tower.maxEnergy), WHITE())
+  if (tower.energy > 0) {
+    const d = tower.dim.x2,
         a = xyz(Math.random() > 0.5 ? -d : d, Math.random() > 0.5 ? -d : d),
         b = xyz(Math.random() > 0.5 ? -d : d, Math.random() > 0.5 ? -d : d)
-  line(ctx, [tower.pos.cor, tower.pos.cor.add(a)], xyzAsHsla(xyz(210, SATURATION, LIGHTING), 1))
-  line(ctx, [tower.pos.cor, tower.pos.cor.add(b)], xyzAsHsla(xyz(210, SATURATION, LIGHTING), 1))
+    line(ctx, [tower.pos.cor, tower.pos.cor.add(a)], xyzAsHsla(xyz(210, SATURATION, LIGHTING), 1))
+    line(ctx, [tower.pos.cor, tower.pos.cor.add(b)], xyzAsHsla(xyz(210, SATURATION, LIGHTING), 1))
+  } else {
+    circle(ctx, tower.pos.cor, 1, xyzAsHsla(xyz(210, SATURATION, LIGHTING), 1))
+  }
 }
 
 export function rayTowerDrawing(ctx: CanvasRenderingContext2D, tower: BeamTowerEl) {
   const orange = xyzAsHsla(xyz(30, SATURATION, LIGHTING), 1)
   circle(ctx, tower.pos.cor, tower.radius, undefined, radiusColor)
-  circle(ctx, tower.pos.cor, tower.dim.x2 - 2, xyzAsHsla(xyz(0, 0, 100), tower.energy / 100), WHITE)
+  circle(ctx, tower.pos.cor, tower.dim.x2 - 2, WHITE(tower.energy / tower.maxEnergy), WHITE())
   line(ctx, [tower.pos.cor, tower.target ?
     tower.pos.cor.add(vectorTo(tower, tower.target, tower.dim.x)) :
     tower.pos.cor], orange)
@@ -138,6 +152,11 @@ function spawnPointDrawing(ctx: CanvasRenderingContext2D, e: SpawnPointEl) {
   bgGradient.addColorStop(1, xyzAsHsla(bottomColor.sub(xyz(0, 0, 30)), 1))
   if (e.spawnCount > 0) {
     circle(ctx, e.pos.cor, e.dim.x2 + Math.sqrt(e.spawnCount), xyzAsHsla(bottomColor.sub(xyz(0, 0, 30)), 0.75))
+  } else if (e.energy > 0) {
+    range(5, 1).map(() => line(ctx, [
+      e.pos.cor,
+      e.pos.cor.add(vector2(Math.random() * Math.PI * 2, e.energy / 100)),
+    ], WHITE(0.5 + Math.random())))
   }
   rectangle(ctx, e.pos.cor, e.dim.sub(unit(2)), bgGradient, e.spawnCount > 0 ? undefined : xyzAsHsla(topColor, 1))
 }
@@ -173,9 +192,8 @@ export function laserDrawing(ctx: CanvasRenderingContext2D, cw: number, ch: numb
 }
 
 export function rayDrawing(ctx: CanvasRenderingContext2D, beam: BeamEl) {
-  line(ctx, [beam.start.pos.cor, beam.end.pos.cor], xyzAsHsla(xyz(30, SATURATION, LIGHTING), 1))
-  line(ctx, [beam.start.pos.cor.sub(one), beam.end.pos.cor.sub(one)], xyzAsHsla(xyz(20, SATURATION, LIGHTING), 0.5))
-  line(ctx, [beam.start.pos.cor.add(one), beam.end.pos.cor.add(one)], xyzAsHsla(xyz(20, SATURATION, LIGHTING), 0.5))
+  line(ctx, [beam.start.pos.cor, beam.end.pos.cor], xyzAsHsla(xyz(10, SATURATION + 30, LIGHTING), 1))
+  line(ctx, [beam.start.pos.cor.sub(one), beam.end.pos.cor.sub(one)], xyzAsHsla(xyz(0, SATURATION + 30, LIGHTING), 0.5))
 }
 
 export function sparkDrawing(ctx: CanvasRenderingContext2D, beam: BeamEl) {
@@ -186,24 +204,32 @@ export function sparkDrawing(ctx: CanvasRenderingContext2D, beam: BeamEl) {
 }
 
 function baseDrawing(ctx: CanvasRenderingContext2D, base: BaseEl, gametime: number) {
-  circle(ctx, base.pos.cor, base.dim.x2, xyzAsHsla(xyz(0, 0, 100), base.health), 'rgba(155, 155, 255, 1)')
+  circle(ctx, base.pos.cor, base.dim.x2, WHITE(base.energy / 100), xyzAsHsla(xyz(240, SATURATION, LIGHTING), 1))
   const op = (Math.floor(gametime / 10) % 100) / 100
   circle(ctx, base.pos.cor, base.dim.x2 + 2, undefined, xyzAsHsla(xyz(0, 0, 100), op))
 }
 
 export function effectDrawing(ctx: CanvasRenderingContext2D, cw: number, ch: number, e: DefenceEl, gameTime: number) {
-  circle(ctx, e.pos.cor, e.dim.x2, undefined, `rgba(255, 255, 155, ${e.health / 5})`)
+  circle(ctx, e.pos.cor, e.dim.x2, undefined, xyzAsHsla(xyz(0, 0, 100), e.health))
 }
 
-function pipeworksDrawing(ctx: CanvasRenderingContext2D, cw: number, ch: number, path: XYZ[], gameTime: number) {
-  const shadowl = path.map((cor) => cor.sub(xyz(1)))
-  const shadowr = path.map((cor) => cor.add(xyz(1)))
-  const t = Math.floor(gameTime / 200), l = path.length - 1, d = t % l,
-        a = path[l - d]
-  line(ctx, shadowl, 'rgba(255, 255, 255, 0.1)')
-  line(ctx, path, 'rgba(255, 255, 255, 1)')
-  line(ctx, shadowr, 'rgba(255, 255, 255, 0.1)')
-  if (a) { circle(ctx, a, 1, 'rgba(255, 255, 255, 0.8)') }
+export function particleDrawing(ctx: CanvasRenderingContext2D, cw: number, ch: number, e: DefenceEl, gameTime: number) {
+  rectangle(ctx, e.pos.cor, e.dim, xyzAsHsla(xyz(0, SATURATION, LIGHTING - 20), 1))
+}
+
+export function shrapnelDrawing(ctx: CanvasRenderingContext2D, cw: number, ch: number, e: DefenceEl, gameTime: number) {
+  rectangle(ctx, e.pos.cor, e.dim.mul(half), WHITE(0.8))
+}
+
+function pipeworksDrawing(ctx: CanvasRenderingContext2D, cw: number, ch: number, tower: TowerEl, gameTime: number) {
+  const shadowl = tower.path.map((cor) => cor.sub(xyz(1)))
+  const shadowr = tower.path.map((cor) => cor.add(xyz(1)))
+  const t = Math.floor(gameTime / 200), l = tower.path.length - 1, d = t % l,
+        a = tower.path[l - d]
+  line(ctx, shadowl, WHITE(0.1))
+  line(ctx, tower.path, WHITE(1))
+  line(ctx, shadowr, WHITE(0.1))
+  if (tower.base.energy > 0 && a) { circle(ctx, a, 1, WHITE(0.8)) }
 }
 
 function xyzAsHsla(value: XYZ, alpha: number) {

@@ -1,3 +1,4 @@
+import { segmentIntersects } from './../node_modules/tiny-game-engine/src/collision'
 import { intersects } from './../node_modules/tiny-game-engine/src/collision'
 import Controls from './../node_modules/tiny-game-engine/src/controls'
 import { dist, el, El, isAt, nearest, vectorTo } from './../node_modules/tiny-game-engine/src/el'
@@ -13,18 +14,20 @@ import {
 import loop from './../node_modules/tiny-game-engine/src/loop'
 import { move, position, Position } from './../node_modules/tiny-game-engine/src/position'
 import { timeBasedTurn } from './../node_modules/tiny-game-engine/src/turn'
-import { unit, xyz, XYZ } from './../node_modules/tiny-game-engine/src/xyz'
-import { findPathCached } from './astar'
+import { half, negone, unit, xyz, XYZ } from './../node_modules/tiny-game-engine/src/xyz'
+import { clearCache, findPathCached } from './astar'
 import {
   blobDrawing,
   drawGame,
   effectDrawing,
   laserDrawing,
   laserTowerDrawing,
+  particleDrawing,
   pelletDrawing,
   pelletTowerDrawing,
   rayDrawing,
   rayTowerDrawing,
+  shrapnelDrawing,
   sparkDrawing,
   sparkTowerDrawing,
   speedyDrawing,
@@ -90,11 +93,12 @@ export interface TowerEl extends DefenceEl {
   energy: number,
   maxEnergy: number,
   path: XYZ[],
+  key: string,
 }
 
 export interface ProjectileTowerEl extends TowerEl {
   target: EnemyEl|null,
-  power: number,
+  powerConsumption: number,
   fireRate: number,
   bulletSpeed: number,
   drawing: (ctx: CanvasRenderingContext2D, tower: ProjectileTowerEl) => void,
@@ -112,6 +116,7 @@ export interface BeamTowerEl extends TowerEl {
 export interface InactiveTowerEl extends DefenceEl {
   id: number,
   cost: number,
+  key: string,
   drawing: (ctx: CanvasRenderingContext2D, tower: InactiveTowerEl) => void,
 }
 
@@ -146,6 +151,7 @@ export interface Game {
   inactiveTowerEls: InactiveTowerEl[],
   enemies: EnemyEl[],
   effects: EffectEl[],
+  blood: XYZ[],
   drawables: DefenceEl[],
   money: number,
   level: number,
@@ -156,45 +162,41 @@ const id = (function* idIterator(n = 0) { while (n < Infinity) { yield n++ } })(
 
 const TILE_SIZE = xyz(8, 8, 8)
 
-export const towerDesigns: {[index: string]: ProjectileTowerEl | BeamTowerEl | InactiveTowerEl } = {
-  KeyQ: {
+export const towerDesigns: Array<ProjectileTowerEl | BeamTowerEl | InactiveTowerEl> = [{
     id: -1, pos: position(), dim: TILE_SIZE, base: {} as BaseEl, path: [], target: null,
-    projectileBuilder: buildPellets, drawing: pelletTowerDrawing,
-    health: 10, cost: 20, radius: 100, fireRate: 500, energy: 100, maxEnergy: 100, power: 4, bulletSpeed: 400,
-  },
-  KeyW: {
+    projectileBuilder: buildPellets, drawing: pelletTowerDrawing, key: 'Q',
+    health: 10, cost: 20, radius: 100, fireRate: 500, energy: 40,
+    maxEnergy: 40, powerConsumption: 20, bulletSpeed: 400,
+  }, {
     id: -1, pos: position(), dim: TILE_SIZE, base: {} as BaseEl, path: [], target: null,
-    projectileBuilder: buildLasers, drawing: laserTowerDrawing,
-    health: 10, cost: 30, radius: 80, fireRate: 125, energy: 100, maxEnergy: 100, power: 2, bulletSpeed: 800,
-  },
-  KeyE: {
+    projectileBuilder: buildLasers, drawing: laserTowerDrawing, key: 'W',
+    health: 10, cost: 30, radius: 80, fireRate: 125, energy: 40,
+    maxEnergy: 40, powerConsumption: 10, bulletSpeed: 800,
+  }, {
     id: -1, pos: position(), dim: TILE_SIZE, base: {} as BaseEl, path: [], target: null,
-    beamBuilder: buildRays, drawing: rayTowerDrawing,
-    health: 10, cost: 50, radius: 160, energy: 100, maxEnergy: 100,
-    powerConsumptionOnHit: 20, powerConsumptionOnIdle: 1,
-  },
-  KeyS: {
+    beamBuilder: buildRays, drawing: rayTowerDrawing, key: 'E',
+    health: 10, cost: 50, radius: 160, energy: 20, maxEnergy: 20,
+    powerConsumptionOnHit: 10, powerConsumptionOnIdle: 1,
+  }, {
     id: -1, pos: position(), dim: TILE_SIZE, base: {} as BaseEl, path: [], target: null,
-    beamBuilder: buildSparks, drawing: sparkTowerDrawing,
-    health: 10, cost: 40, radius: 80, energy: 100, maxEnergy: 100,
-    powerConsumptionOnHit: 20, powerConsumptionOnIdle: 2,
-  },
-  KeyA: {
-    id: -1, pos: position(), dim: TILE_SIZE,
+    beamBuilder: buildSparks, drawing: sparkTowerDrawing, key: 'S',
+    health: 10, cost: 40, radius: 80, energy: 20, maxEnergy: 20,
+    powerConsumptionOnHit: 20, powerConsumptionOnIdle: 4,
+  }, {
+    id: -1, pos: position(), dim: TILE_SIZE, key: 'A',
     drawing: wallTowerDrawing,
     health: 100, cost: 1,
-  },
-}
+  }]
 
 const enemyDesigns = [{
   pos: position(), dim: unit(8), drawing: thugDrawing, path: [],
-  health: 20, speed: 30, price: 6,
+  health: 40, speed: 30, price: 6,
 }, {
   pos: position(), dim: unit(6), drawing: blobDrawing, path: [],
-  health: 12, speed: 40, price: 2,
+  health: 30, speed: 40, price: 2,
 }, {
   pos: position(), dim: unit(4), drawing: speedyDrawing, path: [],
-  health: 8, speed: 80, price: 4,
+  health: 20, speed: 80, price: 4,
 }]
 
 const game: Game = {
@@ -203,6 +205,7 @@ const game: Game = {
   bullets: [],
   beams: [],
   effects: [],
+  blood: [],
   bases: [{
     id: id.next().value,
     pos: position(),
@@ -210,7 +213,7 @@ const game: Game = {
     health: 100,
     energyDispenseAmount: 10,
     energy: 100,
-    energyIncreaseRate: 1000,
+    energyIncreaseRate: 2000,
   }],
   projectileTowerEls: [],
   beamTowerEls: [],
@@ -225,34 +228,38 @@ const game: Game = {
 const controls = new Controls(window, true)
 
 controls.onKeyDown((key: string, isRepeat: boolean) => {
-  const towerChoice = towerDesigns[key]
-  if (isRepeat || !towerChoice || towerChoice.cost > game.money) { return }
+  if (isRepeat) { return }
   if (valueAtGrid(game.grid, controls.cor) === 1) { return }
 
-  const powerSources = game.bases.concat(game.spawnPoints.filter((s) => s.spawnCount === 0))
-  const base = nearest(powerSources, controls.cor)
-  if (!base || !canAccessAllBases(game.bases, assignOnGrid(game.grid, controls.cor, 1))) { return }
+  towerDesigns
+    .filter((t) => `Key${t.key}` === key)
+    .filter((t) => t.cost <= game.money).map((towerChoice) => {
+      const powerSources = game.bases.concat(game.spawnPoints.filter((s) => s.spawnCount === 0))
+      const base = nearest(powerSources, controls.cor)
+      if (!base || !canAccessAllBases(game.bases, game.enemies, game.spawnPoints,
+        assignOnGrid(game.grid, controls.cor, 1))) { return }
 
-  const cor = snapToGridTileCenter(game.grid, controls.cor)
-  if (isProjectileTowerEl(towerChoice)) {
-    game.projectileTowerEls.push(buildTower(cor, towerChoice, base, game.grid))
-  }
-  if (isBeamTowerEl(towerChoice)) {
-    game.beamTowerEls.push(buildTower(cor, towerChoice, base, game.grid))
-  }
-  if (isInactiveTowerEl(towerChoice)) {
-    game.inactiveTowerEls.push(buildInactiveTower(cor, towerChoice))
-  }
-  game.money -= towerChoice.cost
-  game.grid = assignObstacleMatrix(
-    ([] as El[])
-      .concat(game.obstacles)
-      .concat(game.projectileTowerEls)
-      .concat(game.beamTowerEls)
-      .concat(game.inactiveTowerEls)
-      .concat(game.spawnPoints),
-    game.grid)
-  game.enemies.map((e) => e.path = [])
+      const cor = snapToGridTileCenter(game.grid, controls.cor)
+      if (isProjectileTowerEl(towerChoice)) {
+        game.projectileTowerEls.push(buildTower(cor, towerChoice, base, game.grid))
+      }
+      if (isBeamTowerEl(towerChoice)) {
+        game.beamTowerEls.push(buildTower(cor, towerChoice, base, game.grid))
+      }
+      if (isInactiveTowerEl(towerChoice)) {
+        game.inactiveTowerEls.push(buildInactiveTower(cor, towerChoice))
+      }
+      game.money -= towerChoice.cost
+      game.grid = assignObstacleMatrix(
+        ([] as El[])
+          .concat(game.obstacles)
+          .concat(game.projectileTowerEls)
+          .concat(game.beamTowerEls)
+          .concat(game.inactiveTowerEls)
+          .concat(game.spawnPoints),
+        game.grid)
+      game.enemies.map((e) => e.path = [])
+    })
 })
 
 const stopGameLoop = loop((step: number, gameTime: number) => {
@@ -268,6 +275,11 @@ const stopGameLoop = loop((step: number, gameTime: number) => {
       game.grid)
   }
 
+  if (timeBasedTurn('spawn-swarm', Math.max(3000, 10000 - (5 * game.level * game.level + game.level)))) {
+    game.level += 1
+    game.spawnPoints.push(buildSpawnPoint(game.grid, game.level, game.bases, game.enemies, game.spawnPoints))
+  }
+
   game.spawnPoints.map((s) => {
     if (timeBasedTurn(`energyincrease-${s.id}`, s.energyIncreaseRate)) { s.energy += 100 }
     if (s.spawnCount > 0 && timeBasedTurn(`spawn-swarm-enemy-${s.id}`, s.enemyRate)) {
@@ -278,10 +290,6 @@ const stopGameLoop = loop((step: number, gameTime: number) => {
       }
     }
   })
-  if (timeBasedTurn('spawn-swarm', 5000)) {
-    game.level += 1
-    game.spawnPoints.push(buildSpawnPoint(game.grid, game.level))
-  }
 
   game.enemies.map((e) => {
     const target = nearest(game.bases, e.pos.cor)
@@ -297,21 +305,21 @@ const stopGameLoop = loop((step: number, gameTime: number) => {
     }
   })
 
-  game.projectileTowerEls.map((e) => {
-    e.target = nearest(game.enemies, e.pos.cor)
-    if (e.energy > 0 && timeBasedTurn(`shoot-${e.id}`, e.fireRate)) {
-      const bullets = e.projectileBuilder(e, game.enemies)
+  game.projectileTowerEls.map((t) => {
+    t.target = nearestVisibleEnemy(game.enemies, game.obstacles, t)
+    if (t.energy > 0 && timeBasedTurn(`shoot-${t.id}`, t.fireRate)) {
+      const bullets = t.projectileBuilder(t, game.enemies)
       game.bullets = game.bullets.concat(bullets)
-      e.energy -= bullets.reduce((sum, b) => sum + b.power, 0)
+      t.energy -= bullets.reduce((sum, b) => sum + b.power, 0)
     }
   })
 
-  game.beamTowerEls.map((e) => {
-    e.target = nearest(game.enemies, e.pos.cor)
-    if (e.energy > 0) {
-      const beams = e.beamBuilder(e, game.enemies, game.beamTowerEls, game.beams)
+  game.beamTowerEls.map((t) => {
+    t.target = nearestVisibleEnemy(game.enemies, game.obstacles, t)
+    if (t.energy > 0) {
+      const beams = t.beamBuilder(t, game.enemies, game.beamTowerEls, game.beams)
       game.beams = game.beams.concat(beams)
-      e.energy -= beams.reduce((sum, b) => sum + e.powerConsumptionOnIdle, 0)
+      t.energy -= beams.reduce((sum, b) => sum + t.powerConsumptionOnIdle, 0)
     }
   })
 
@@ -335,7 +343,15 @@ const stopGameLoop = loop((step: number, gameTime: number) => {
         b.health -= 1
         e.health -= b.power
         if (e.health <= 0) { game.money += e.price }
-        game.effects = game.effects.concat(buildExplosion(b.pos.cor))
+        game.effects = game.effects.concat(buildBulletCollision(b, e))
+      }
+    })
+    game.obstacles.map((o) => {
+      if (intersects(b, o)) {
+        b.health -= 1
+        o.health -= b.power
+        if (o.health <= 0) { game.effects = game.effects.concat(buildExplosion(o.pos.cor)) }
+        game.effects = game.effects.concat(buildBulletObstacleCollision(b, o))
       }
     })
   })
@@ -361,7 +377,11 @@ const stopGameLoop = loop((step: number, gameTime: number) => {
   game.enemies.map((e) => e.pos = move(e.pos, step))
   game.effects.map((e) => {
     e.health -= step
+    e.pos = move(e.pos, step)
     e.dim = move(position(e.dim, xyz(e.speed, e.speed)), step).cor
+    if (e.drawing === particleDrawing && e.health <= 0) {
+      game.blood.push(e.pos.cor)
+    }
   })
 
   drawGame(game, controls, gameTime)
@@ -378,17 +398,32 @@ const stopGameLoop = loop((step: number, gameTime: number) => {
   game.projectileTowerEls = game.projectileTowerEls.filter(isNotRemovable)
   game.beamTowerEls = game.beamTowerEls.filter(isNotRemovable)
   game.effects = game.effects.filter(isNotRemovable)
+  if (game.obstacles.find((o) => o.health <= 0)) {
+    clearCache()
+    game.obstacles = game.obstacles.filter(isNotRemovable)
+  }
 
   if (game.bases.length === 0) {
     stopGameLoop()
   }
 })
 
+function nearestVisibleEnemy(enemies: EnemyEl[], obstacles: DefenceEl[], tower: ProjectileTowerEl|BeamTowerEl) {
+  return nearest(game.enemies
+    .filter((e) => dist(tower, e) <= tower.radius)
+    .filter((e) => !(game.obstacles
+      .map((o) => segments(o)).reduce(flatten, [])
+      .reduce((i, segment) => {
+        return i || segmentIntersects(tower.pos.cor, e.pos.cor, segment[0], segment[1])
+      }, false))), tower.pos.cor)
+}
+
 function refuel(e: TowerEl, gameTime: number) {
-  if (e.base) {
+  if (e.base && e.base.energy > 0 && e.energy < e.maxEnergy) {
     const t = Math.floor(gameTime / 200)
     if (t % (e.path.length - 1) === 0) {
       e.energy = Math.min(e.maxEnergy, e.energy + e.base.energyDispenseAmount)
+      e.base.energy = Math.max(0, e.base.energy - e.base.energyDispenseAmount)
     }
   }
 }
@@ -420,25 +455,60 @@ function isOutSideViewPort(e: El) {
 }
 
 function buildExplosion(cor: XYZ): EffectEl[] {
-  return [{ pos: position(cor), dim: xyz(10, 10), health: 2, speed: 20, drawing: effectDrawing }]
+  return [{
+    pos: position(cor),
+    dim: xyz(10, 10),
+    health: 0.75,
+    speed: 30,
+    drawing: effectDrawing,
+  }]
 }
 
-function buildSpawnPoint(grid: Grid, level: number): SpawnPointEl {
+function buildBulletCollision(b: BulletEl, e: DefenceEl): EffectEl[] {
+  return range(10, 1).map((i) => ({
+    pos: position(b.pos.cor, b.pos.vel
+      .mul(half).mul(half)
+      .add(xyz(random([-50, 50]), random([-50, 50]))
+        .mul(xyz(Math.random(), Math.random()))),
+      b.pos.vel.mul(negone).mul(half)),
+    dim: xyz(2, 2),
+    health: 0.5,
+    speed: 0,
+    drawing: particleDrawing,
+  }))
+}
+
+function buildBulletObstacleCollision(b: BulletEl, o: DefenceEl): EffectEl[] {
+  return buildBulletCollision(b, o).map((e) => ({...e,
+    pos: position(e.pos.cor, e.pos.vel.mul(negone), e.pos.acc.mul(negone)),
+    drawing: shrapnelDrawing,
+  }))
+}
+
+function buildSpawnPoint(grid: Grid, level: number,
+                         bases: BaseEl[], enemies: EnemyEl[], spawnPoints: SpawnPointEl[]): SpawnPointEl {
   let cor = snapToGridTileCenter(grid, randomCorCloseToEdge())
-  while (valueAtGrid(grid, cor) === 1) { cor = snapToGridTileCenter(grid, randomCorCloseToEdge()) }
+  while (valueAtGrid(grid, cor) === 1 || !canAccessAllBases(bases, enemies, spawnPoints, grid)) {
+    cor = snapToGridTileCenter(grid, randomCorCloseToEdge())
+  }
   return {
     id: id.next().value, pos: position(cor),
     dim: TILE_SIZE, health: 1000, enemyRate: Math.max(400, 3000 - Math.pow(level * 10, 2)),
     spawnCount: 8 + level * 2,
     enemyDesigns: enemyDesigns.slice(0, level),
-    energyDispenseAmount: 10, energy: 100, energyIncreaseRate: 3000,
+    energyDispenseAmount: 10, energy: 1000 + 50 * level, energyIncreaseRate: 9999999,
   }
 }
 
-function canAccessAllBases(bases: DefenceEl[], grid: Grid) {
+function canAccessAllBases(bases: DefenceEl[], enemies: EnemyEl[], spawnPoints: SpawnPointEl[], grid: Grid) {
+  const cors = spawnPoints.filter((s) => s.spawnCount > 0).map((s) => gridMatrixCorAt(grid, s.pos.cor))
+    .concat(enemies.map((e) => gridMatrixCorAt(grid, e.pos.cor)))
+    .concat([xyz(), grid.dim.sub(xyz(1, 1))])
   return bases
     .map((base) => gridMatrixCorAt(grid, base.pos.cor))
-    .filter((cor) => findPathCached([0, 0], [cor.x, cor.y], grid.matrix, false).length > 0)
+    .filter((cor) => cors
+      .map((c) => findPathCached([c.x, c.y], [cor.x, cor.y], grid.matrix, false).length > 0)
+      .reduce((result, val) => result && val, true))
     .length === bases.length
 }
 
@@ -449,9 +519,10 @@ function randomCorOffCenter(distFromCenter: number, bases: BaseEl[], grid: Grid)
   ]).mul(grid.tileSize))
 }
 
-function randomAccessibleCorOffCenter(distFromCenter: number, bases: BaseEl[], grid: Grid) {
+function randomAccessibleCorOffCenter(distFromCenter: number, bases: BaseEl[],
+                                      enemies: EnemyEl[], spawnPoints: SpawnPointEl[], grid: Grid) {
   let cor = randomCorOffCenter(distFromCenter, bases, grid)
-  while (valueAtGrid(grid, cor) === 1 || !canAccessAllBases(bases, assignOnGrid(grid, cor, 1))) {
+  while (valueAtGrid(grid, cor) === 1 || !canAccessAllBases(bases, enemies, spawnPoints, assignOnGrid(grid, cor, 1))) {
     cor = randomCorOffCenter(distFromCenter, bases, grid)
   }
   return cor
@@ -463,7 +534,7 @@ function* levelGenerator(distFromCenter: number, maxDist: number, fillage: numbe
       obsCount = 0
       distFromCenter += 4
     }
-    const cor = randomAccessibleCorOffCenter(distFromCenter, bases, grid)
+    const cor = randomAccessibleCorOffCenter(distFromCenter, bases, [], [], grid)
     grid = assignOnGrid(grid, cor, 1)
     yield cor
   }
@@ -488,9 +559,10 @@ function* blockObstacleGenerator(bases: BaseEl[], grid: Grid) {
   while (true) {
     let cor = rand()
     const dim = TILE_SIZE.mul(unit(random([5, 7, 9, 11])))
-    while (!cor || valueAtGrid(grid, cor) === 1 || !canAccessAllBases(bases, assignOnGrid(grid, cor, 1, dim))) {
+    while (!cor || valueAtGrid(grid, cor) === 1 || !canAccessAllBases(bases, [], [], assignOnGrid(grid, cor, 1, dim))) {
       cor = rand()
     }
+    clearCache()
     yield { pos: position(cor), dim, health: 1000 }
   }
 }
@@ -508,34 +580,33 @@ function buildBlockObstacles(bases: BaseEl[], grid: Grid): DefenceEl[] {
 }
 
 function buildPellets(tower: ProjectileTowerEl, enemies: DefenceEl[]): BulletEl[] {
-  return tower.target && dist(tower, tower.target) <= tower.radius ? [{
+  return tower.target ? [{
     pos: position(tower.pos.cor, vectorTo(tower, tower.target, tower.bulletSpeed)),
-    dim: unit(2), health: 1, drawing: pelletDrawing, power: tower.power,
+    dim: unit(2), health: 1, drawing: pelletDrawing, power: tower.powerConsumption,
   }] : []
 }
 
 function buildLasers(tower: ProjectileTowerEl, enemies: DefenceEl[]): BulletEl[] {
-  return tower.target && dist(tower, tower.target) <= tower.radius ? [{
+  return tower.target ? [{
     pos: position(tower.pos.cor, vectorTo(tower, tower.target, tower.bulletSpeed)),
-    dim: unit(2), health: 1, drawing: laserDrawing, power: tower.power,
+    dim: unit(2), health: 1, drawing: laserDrawing, power: tower.powerConsumption,
   }] : []
 }
 
 function buildSparks(tower: BeamTowerEl, enemies: EnemyEl[], towers: TowerEl[], beams: BeamEl[]): BeamEl[] {
-  return towers
+  return tower.energy > 0 ? towers
     .filter((t) => (t as BeamTowerEl).beamBuilder === buildSparks && t !== tower)
     .filter((t) => dist(tower, t) <= tower.radius)
     .filter((t) => beams.filter((b) => [b.start, b.end].includes(t) && [b.start, b.end].includes(tower)).length === 0)
     .map((t) => ({
       id: id.next().value, start: tower, end: t, powerSource: tower,
       range: tower.radius, drawing: sparkDrawing, components: [],
-    }))
+    })) : []
 }
 
 function buildRays(tower: BeamTowerEl, enemies: EnemyEl[], towers: TowerEl[], beams: BeamEl[]): BeamEl[] {
-  const enemy = nearest(enemies, tower.pos.cor)
-  return enemy && dist(tower, enemy) <= tower.radius && beams.filter((b) => b.start === tower).length === 0 ? [{
-    id: id.next().value, start: tower, end: enemy, powerSource: tower,
+  return tower.target && beams.filter((b) => b.start === tower).length === 0 ? [{
+    id: id.next().value, start: tower, end: tower.target, powerSource: tower,
     range: tower.radius, drawing: rayDrawing, components: [],
   }] : []
 }
@@ -570,8 +641,20 @@ function randomCorCloseToEdge() {
   return xyz(randomBetween(-w, w), randomBetween(-h, h))
 }
 
-function range(max: number, step: number): number[] {
+export function range(max: number, step: number): number[] {
   const result = []
   for (let i = 0; i < max; i += step) { result.push(i) }
   return result
+}
+
+function segments(o: DefenceEl) {
+  const tl = o.pos.cor.add(o.dim.mul(half).mul(negone))
+  const tr = o.pos.cor.add(o.dim.mul(half).mul(xyz(1, -1)))
+  const br = o.pos.cor.add(o.dim.mul(half))
+  const bl = o.pos.cor.add(o.dim.mul(half).mul(xyz(-1, 1)))
+  return [[tl, tr], [tr, br], [br, bl], [bl, tl]]
+}
+
+function flatten<T>(memo: T[], row: T[]) {
+  return memo.concat(row)
 }
