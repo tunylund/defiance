@@ -395,12 +395,21 @@ const stopGameLoop = loop((step: number, gameTime: number) => {
       beam.end.health > 0
   })
   game.enemies = game.enemies.filter(isNotRemovable)
-  game.projectileTowerEls = game.projectileTowerEls.filter(isNotRemovable)
-  game.beamTowerEls = game.beamTowerEls.filter(isNotRemovable)
   game.effects = game.effects.filter(isNotRemovable)
-  if (game.obstacles.find((o) => o.health <= 0)) {
+  if (game.projectileTowerEls.find((o) => o.health <= 0)) {
+    game.projectileTowerEls = game.projectileTowerEls.filter(isNotRemovable)
+    game.enemies.map((e) => e.path = [])
     clearCache()
+  }
+  if (game.beamTowerEls.find((o) => o.health <= 0)) {
+    game.beamTowerEls = game.beamTowerEls.filter(isNotRemovable)
+    game.enemies.map((e) => e.path = [])
+    clearCache()
+  }
+  if (game.obstacles.find((o) => o.health <= 0)) {
     game.obstacles = game.obstacles.filter(isNotRemovable)
+    game.enemies.map((e) => e.path = [])
+    clearCache()
   }
 
   if (game.bases.length === 0) {
