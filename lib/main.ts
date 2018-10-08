@@ -234,7 +234,7 @@ controls.onKeyDown((key: string, isRepeat: boolean) => {
   towerDesigns
     .filter((t) => `Key${t.key}` === key)
     .filter((t) => t.cost <= game.money).map((towerChoice) => {
-      const powerSources = game.bases.concat(game.spawnPoints.filter((s) => s.spawnCount === 0))
+      const powerSources = game.bases.concat(game.spawnPoints.filter((s) => s.spawnCount === 0 && s.energy > 0))
       const base = nearest(powerSources, controls.cor)
       if (!base || !canAccessAllBases(game.bases, game.enemies, game.spawnPoints,
         assignOnGrid(game.grid, controls.cor, 1))) { return }
@@ -260,6 +260,10 @@ controls.onKeyDown((key: string, isRepeat: boolean) => {
         game.grid)
       game.enemies.map((e) => e.path = [])
     })
+})
+
+window.addEventListener('resize', () => {
+  drawGame(game, controls, 0)
 })
 
 const stopGameLoop = loop((step: number, gameTime: number) => {
@@ -395,22 +399,16 @@ const stopGameLoop = loop((step: number, gameTime: number) => {
       beam.end.health > 0
   })
   game.enemies = game.enemies.filter(isNotRemovable)
-  game.effects = game.effects.filter(isNotRemovable)
-  if (game.projectileTowerEls.find((o) => o.health <= 0)) {
-    game.projectileTowerEls = game.projectileTowerEls.filter(isNotRemovable)
-    game.enemies.map((e) => e.path = [])
-    clearCache()
-  }
-  if (game.beamTowerEls.find((o) => o.health <= 0)) {
-    game.beamTowerEls = game.beamTowerEls.filter(isNotRemovable)
-    game.enemies.map((e) => e.path = [])
-    clearCache()
-  }
-  if (game.obstacles.find((o) => o.health <= 0)) {
-    game.obstacles = game.obstacles.filter(isNotRemovable)
-    game.enemies.map((e) => e.path = [])
-    clearCache()
-  }
+  game.effects = game.effects.filter(isNotRemovable);
+
+  [game.projectileTowerEls, game.beamTowerEls, game.obstacles].map((arr) => {
+    arr.filter(isRemovable).map((r) => {
+      game.grid = assignOnGrid(game.grid, r.pos.cor, 0, r.dim)
+      arr.splice(arr.indexOf(r), 1)
+      game.enemies.map((e) => e.path = [])
+      clearCache()
+    })
+  })
 
   if (game.bases.length === 0) {
     stopGameLoop()
@@ -418,11 +416,10 @@ const stopGameLoop = loop((step: number, gameTime: number) => {
 })
 
 function nearestVisibleEnemy(enemies: EnemyEl[], obstacles: DefenceEl[], tower: ProjectileTowerEl|BeamTowerEl) {
-  return nearest(game.enemies
+  const oSegments = obstacles.map((o) => segments(o)).reduce(flatten, [])
+  return nearest(enemies
     .filter((e) => dist(tower, e) <= tower.radius)
-    .filter((e) => !(game.obstacles
-      .map((o) => segments(o)).reduce(flatten, [])
-      .reduce((i, segment) => {
+    .filter((e) => !(oSegments.reduce((i, segment) => {
         return i || segmentIntersects(tower.pos.cor, e.pos.cor, segment[0], segment[1])
       }, false))), tower.pos.cor)
 }
@@ -521,44 +518,6 @@ function canAccessAllBases(bases: DefenceEl[], enemies: EnemyEl[], spawnPoints: 
     .length === bases.length
 }
 
-function randomCorOffCenter(distFromCenter: number, bases: BaseEl[], grid: Grid) {
-  return snapToGridTileCenter(grid, random([
-    xyz(random([-distFromCenter, distFromCenter]), randomBetween(-distFromCenter, distFromCenter)),
-    xyz(randomBetween(-distFromCenter, distFromCenter), random([-distFromCenter, distFromCenter])),
-  ]).mul(grid.tileSize))
-}
-
-function randomAccessibleCorOffCenter(distFromCenter: number, bases: BaseEl[],
-                                      enemies: EnemyEl[], spawnPoints: SpawnPointEl[], grid: Grid) {
-  let cor = randomCorOffCenter(distFromCenter, bases, grid)
-  while (valueAtGrid(grid, cor) === 1 || !canAccessAllBases(bases, enemies, spawnPoints, assignOnGrid(grid, cor, 1))) {
-    cor = randomCorOffCenter(distFromCenter, bases, grid)
-  }
-  return cor
-}
-
-function* levelGenerator(distFromCenter: number, maxDist: number, fillage: number, bases: BaseEl[], grid: Grid) {
-  for (let obsCount = 0; distFromCenter < maxDist; obsCount++) {
-    if (obsCount >= (distFromCenter * 8) * fillage || obsCount >= (distFromCenter * 8) - 5) {
-      obsCount = 0
-      distFromCenter += 4
-    }
-    const cor = randomAccessibleCorOffCenter(distFromCenter, bases, [], [], grid)
-    grid = assignOnGrid(grid, cor, 1)
-    yield cor
-  }
-}
-
-function buildMazeObstacles(bases: BaseEl[], grid: Grid): DefenceEl[] {
-  const result = [] as XYZ[]
-  const levelGen = levelGenerator(2, Math.min(grid.dim2.x, grid.dim2.y), 1, bases, grid)
-  for (let level = levelGen.next(); !level.done; level = levelGen.next()) {
-    result.push(level.value)
-  }
-
-  return result.map((cor) => ({ pos: position(cor), dim: TILE_SIZE, health: 1000 }))
-}
-
 function randomXYZIn(dim: XYZ) {
   return xyz(randomBetween(0, dim.x), randomBetween(0, dim.y), randomBetween(0, dim.z))
 }
@@ -567,7 +526,7 @@ function* blockObstacleGenerator(bases: BaseEl[], grid: Grid) {
   const rand = () => snapToGridTileCenter(grid, randomXYZIn(grid.dim).sub(grid.dim2).mul(grid.tileSize))
   while (true) {
     let cor = rand()
-    const dim = TILE_SIZE.mul(unit(random([5, 7, 9, 11])))
+    const dim = TILE_SIZE.mul(unit(random([3, 5, 7, 9, 11])))
     while (!cor || valueAtGrid(grid, cor) === 1 || !canAccessAllBases(bases, [], [], assignOnGrid(grid, cor, 1, dim))) {
       cor = rand()
     }
@@ -582,7 +541,9 @@ function buildBlockObstacles(bases: BaseEl[], grid: Grid): DefenceEl[] {
   const blockObstacleGen = blockObstacleGenerator(bases, grid)
   while (result.reduce((area, o) => area + o.dim.x * o.dim.y, 0) < maxArea * fillage) {
     let no = blockObstacleGen.next()
-    while (result.reduce((r, o) => r || intersects(o, no.value), false)) { no = blockObstacleGen.next() }
+    while (result.reduce((r, o) => r || intersects(o, no.value), false)) {
+      no = blockObstacleGen.next()
+    }
     result.push(no.value)
   }
   return result

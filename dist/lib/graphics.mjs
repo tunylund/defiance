@@ -1,4 +1,4 @@
-import { draw } from './../node_modules/tiny-game-engine/src/draw.mjs';
+import { draw, drawImage, drawingLayer } from './../node_modules/tiny-game-engine/src/draw.mjs';
 import { vectorTo } from './../node_modules/tiny-game-engine/src/el.mjs';
 import { gridStep, snapToGridTileCenter } from './../node_modules/tiny-game-engine/src/grid.mjs';
 import { position } from './../node_modules/tiny-game-engine/src/position.mjs';
@@ -11,28 +11,29 @@ const WHITE = (a = 1) => xyzAsHsla(xyz(0, 0, 100), a);
 const topColor = xyz(randomBetween(0, 360), SATURATION, LIGHTING);
 const bottomColor = topColor.add(xyz(randomBetween(30, 120)));
 const radiusColor = xyzAsHsla(topColor.sub(xyz(50, 0, 50)), 0.15);
+const bloodLayer = drawingLayer(window);
 export function drawGame(game, controls, gameTime) {
-    draw((ctx, cw, ch) => backgroundDrawing(ctx, cw, ch, game), position(), xyz());
-    draw((ctx) => {
-        game.blood.map((b) => circle(ctx, b, 0.5, xyzAsHsla(xyz(0, SATURATION, LIGHTING - 20), 0.5)));
-    }, position(), xyz());
-    game.spawnPoints.map((e) => draw((ctx) => spawnPointDrawing(ctx, e), e.pos, e.dim));
     draw((ctx, cw, ch) => {
+        game.blood.map((b) => circle(ctx, b, 0.5, xyzAsHsla(xyz(0, SATURATION, LIGHTING - 20), 0.5)));
+        game.blood = [];
+    }, position(), bloodLayer);
+    draw((ctx, cw, ch) => backgroundDrawing(ctx, cw, ch, game));
+    drawImage(bloodLayer.canvas);
+    draw((ctx, cw, ch) => {
+        game.spawnPoints.map((e) => spawnPointDrawing(ctx, e));
         game.projectileTowerEls.map((t) => pipeworksDrawing(ctx, cw, ch, t, gameTime));
         game.beamTowerEls.map((t) => pipeworksDrawing(ctx, cw, ch, t, gameTime));
-    }, position(), xyz());
-    game.projectileTowerEls.map((e) => draw((ctx) => e.drawing(ctx, e), e.pos, e.dim));
-    game.beamTowerEls.map((e) => draw((ctx) => e.drawing(ctx, e), e.pos, e.dim));
-    game.inactiveTowerEls.map((e) => draw((ctx) => e.drawing(ctx, e), e.pos, e.dim));
-    game.enemies.map((e) => draw((ctx, cw, ch) => e.drawing(ctx, cw, ch, e, gameTime, game), e.pos, e.dim));
-    game.bases.map((e) => draw((ctx) => baseDrawing(ctx, e, gameTime), e.pos, e.dim));
-    game.bullets.map((e) => draw((ctx, cw, ch) => e.drawing(ctx, cw, ch, e, gameTime, game), e.pos, e.dim));
-    game.beams.map((e) => draw((ctx) => e.drawing(ctx, e), e.start.pos, e.start.dim));
-    game.effects.map((e) => draw((ctx, cw, ch) => e.drawing(ctx, cw, ch, e, gameTime, game), e.pos, e.dim));
-    draw((ctx, cw, ch) => {
+        game.projectileTowerEls.map((e) => e.drawing(ctx, e));
+        game.beamTowerEls.map((e) => e.drawing(ctx, e));
+        game.inactiveTowerEls.map((e) => e.drawing(ctx, e));
+        game.enemies.map((e) => e.drawing(ctx, cw, ch, e, gameTime, game));
+        game.bases.map((e) => baseDrawing(ctx, e, gameTime));
+        game.bullets.map((e) => e.drawing(ctx, cw, ch, e, gameTime, game));
+        game.beams.map((e) => e.drawing(ctx, e));
+        game.effects.map((e) => e.drawing(ctx, cw, ch, e, gameTime, game));
         game.obstacles.map((o) => rectangle(ctx, o.pos.cor, o.dim.add(unit(2)), xyzAsHsla(xyz(), 0.5)));
         game.obstacles.map((o) => obstacleDrawing(ctx, ch, o));
-    }, position(), xyz());
+    });
     draw((ctx, cw, ch) => {
         const moneyDim = xyz(game.money, 2), moneyCor = xyz(-cw + moneyDim.x2, -ch + moneyDim.y2);
         rectangle(ctx, moneyCor, moneyDim, xyzAsHsla(xyz(60, SATURATION + 40, LIGHTING), 1));
@@ -43,11 +44,12 @@ export function drawGame(game, controls, gameTime) {
         rectangle(ctx, snapToGridTileCenter(game.grid, controls.cor), game.grid.tileSize, xyzAsHsla(xyz(0, 0, 0), 0.4));
         ctx.fillStyle = WHITE();
         Object.values(towerDesigns).map((towerDesign, i) => {
+            const key = towerDesign.key;
             const count = Math.floor(game.money / towerDesign.cost);
             const name = towerDesign.drawing.name.replace('Drawing', '');
-            ctx.fillText(`${count} ${name}`, -cw + 20, -ch + 24 + i * game.grid.tileSize.y * 2);
+            ctx.fillText(`${key}: ${count} ${name}`, -cw + 20, -ch + 24 + i * game.grid.tileSize.y * 2);
         });
-    }, position(0, 0, 100), xyz());
+    }, position(0, 0, 100));
 }
 function obstacleDrawing(ctx, ch, obstacle) {
     const bgGradient = ctx.createLinearGradient(0, 0, 0, ch);
