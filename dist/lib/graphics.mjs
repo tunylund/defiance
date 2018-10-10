@@ -31,7 +31,7 @@ export function drawGame(game, controls, gameTime) {
         game.bullets.map((e) => e.drawing(ctx, cw, ch, e, gameTime, game));
         game.beams.map((e) => e.drawing(ctx, e));
         game.effects.map((e) => e.drawing(ctx, cw, ch, e, gameTime, game));
-        game.obstacles.map((o) => rectangle(ctx, o.pos.cor, o.dim.add(unit(2)), xyzAsHsla(xyz(), 0.5)));
+        game.obstacles.map((o) => rectangle(ctx, o.pos.cor, o.dim.add(unit(3)), xyzAsHsla(xyz(), 0.5)));
         game.obstacles.map((o) => obstacleDrawing(ctx, ch, o));
     });
     draw((ctx, cw, ch) => {
