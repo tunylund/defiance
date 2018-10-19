@@ -522,29 +522,25 @@ function randomXYZIn(dim: XYZ) {
   return xyz(randomBetween(0, dim.x), randomBetween(0, dim.y), randomBetween(0, dim.z))
 }
 
-function* blockObstacleGenerator(bases: BaseEl[], grid: Grid) {
-  const rand = () => snapToGridTileCenter(grid, randomXYZIn(grid.dim).sub(grid.dim2).mul(grid.tileSize))
-  while (true) {
-    let cor = rand()
-    const dim = TILE_SIZE.mul(unit(random([3, 5, 7, 9, 11])))
-    while (!cor || valueAtGrid(grid, cor) === 1 || !canAccessAllBases(bases, [], [], assignOnGrid(grid, cor, 1, dim))) {
-      cor = rand()
-    }
-    clearCache()
-    yield { pos: position(cor), dim, health: 1000 }
-  }
-}
-
 function buildBlockObstacles(bases: BaseEl[], grid: Grid): DefenceEl[] {
-  const fillage = 0.5, result = [] as DefenceEl[],
-        gridSize = grid.dim.mul(grid.tileSize), maxArea = gridSize.x * gridSize.y
-  const blockObstacleGen = blockObstacleGenerator(bases, grid)
-  while (result.reduce((area, o) => area + o.dim.x * o.dim.y, 0) < maxArea * fillage) {
-    let no = blockObstacleGen.next()
-    while (result.reduce((r, o) => r || intersects(o, no.value), false)) {
-      no = blockObstacleGen.next()
+  const fillage = 0.6, padding = xyz(8, 8).mul(grid.tileSize),
+        gridSize = grid.dim.mul(grid.tileSize), maxAttempts = 200,
+        maxArea = (gridSize.x - padding.x) * (gridSize.y - padding.y) * fillage,
+        result = [] as DefenceEl[]
+  const randInGrid = () => randomXYZIn(grid.dim).sub(grid.dim2).mul(grid.tileSize)
+  const randCor = () => snapToGridTileCenter(grid, randInGrid())
+  const randDim = () => grid.tileSize.mul(unit(random([1, 3, 5, 7, 9, 11])))
+  const randObs = () => ({ pos: position(randCor()), dim: randDim(), health: 1000 })
+  const isOccupied = (obs: El) => valueAtGrid(grid, obs.pos.cor) === 1
+  const blocksAccess = (obs: El) => !canAccessAllBases(bases, [], [], assignOnGrid(grid, obs.pos.cor, 1, obs.dim))
+  while (result.reduce((area, o) => area + o.dim.x * o.dim.y, 0) < maxArea) {
+    let attempts = 0, obs = randObs()
+    while (isOccupied(obs) || blocksAccess(obs) ||
+      result.reduce((r, o) => r || intersects(o, obs), false)) {
+      obs = randObs()
+      if (++attempts > maxAttempts) { return result }
     }
-    result.push(no.value)
+    result.push(obs)
   }
   return result
 }

@@ -364,7 +364,7 @@ function* blockObstacleGenerator(bases, grid) {
         yield { pos: position(cor), dim, health: 1000 };
     }
 }
-function buildBlockObstacles(bases, grid) {
+function buildBlockObstacles_(bases, grid) {
     const fillage = 0.5, result = [], gridSize = grid.dim.mul(grid.tileSize), maxArea = gridSize.x * gridSize.y;
     const blockObstacleGen = blockObstacleGenerator(bases, grid);
     while (result.reduce((area, o) => area + o.dim.x * o.dim.y, 0) < maxArea * fillage) {
@@ -373,6 +373,27 @@ function buildBlockObstacles(bases, grid) {
             no = blockObstacleGen.next();
         }
         result.push(no.value);
+    }
+    return result;
+}
+function buildBlockObstacles(bases, grid) {
+    const fillage = 0.6, padding = xyz(8, 8).mul(grid.tileSize), gridSize = grid.dim.mul(grid.tileSize), maxAttempts = 200, maxArea = (gridSize.x - padding.x) * (gridSize.y - padding.y) * fillage, result = [];
+    const randInGrid = () => randomXYZIn(grid.dim).sub(grid.dim2).mul(grid.tileSize);
+    const randCor = () => snapToGridTileCenter(grid, randInGrid());
+    const randDim = () => grid.tileSize.mul(unit(random([1, 3, 5, 7, 9, 11])));
+    const randObs = () => ({ pos: position(randCor()), dim: randDim(), health: 1000 });
+    const isOccupied = (obs) => valueAtGrid(grid, obs.pos.cor) === 1;
+    const blocksAccess = (obs) => !canAccessAllBases(bases, [], [], assignOnGrid(grid, obs.pos.cor, 1, obs.dim));
+    while (result.reduce((area, o) => area + o.dim.x * o.dim.y, 0) < maxArea) {
+        let attempts = 0, obs = randObs();
+        while (isOccupied(obs) || blocksAccess(obs) ||
+            result.reduce((r, o) => r || intersects(o, obs), false)) {
+            obs = randObs();
+            if (++attempts > maxAttempts) {
+                return result;
+            }
+        }
+        result.push(obs);
     }
     return result;
 }
