@@ -102,7 +102,7 @@ export interface ProjectileTowerEl extends TowerEl {
   fireRate: number,
   bulletSpeed: number,
   drawing: (ctx: CanvasRenderingContext2D, tower: ProjectileTowerEl) => void,
-  projectileBuilder: (tower: ProjectileTowerEl, targets: EnemyEl[]) => BulletEl[]
+  projectileBuilder: (tower: ProjectileTowerEl) => BulletEl[]
 }
 
 export interface BeamTowerEl extends TowerEl {
@@ -110,7 +110,7 @@ export interface BeamTowerEl extends TowerEl {
   powerConsumptionOnHit: number,
   powerConsumptionOnIdle: number,
   drawing: (ctx: CanvasRenderingContext2D, tower: BeamTowerEl) => void,
-  beamBuilder: (tower: BeamTowerEl, targets: EnemyEl[], towers: TowerEl[], beams: BeamEl[]) => BeamEl[]
+  beamBuilder: (tower: BeamTowerEl, towers: TowerEl[], beams: BeamEl[]) => BeamEl[]
 }
 
 export interface InactiveTowerEl extends DefenceEl {
@@ -310,18 +310,18 @@ const stopGameLoop = loop((step: number, gameTime: number) => {
   })
 
   game.projectileTowerEls.map((t) => {
-    t.target = nearestVisibleEnemy(game.enemies, game.obstacles, t)
     if (t.energy > 0 && timeBasedTurn(`shoot-${t.id}`, t.fireRate)) {
-      const bullets = t.projectileBuilder(t, game.enemies)
+      t.target = nearestVisibleEnemy(game.enemies, game.obstacles, t)
+      const bullets = t.projectileBuilder(t)
       game.bullets = game.bullets.concat(bullets)
       t.energy -= bullets.reduce((sum, b) => sum + b.power, 0)
     }
   })
 
   game.beamTowerEls.map((t) => {
-    t.target = nearestVisibleEnemy(game.enemies, game.obstacles, t)
     if (t.energy > 0) {
-      const beams = t.beamBuilder(t, game.enemies, game.beamTowerEls, game.beams)
+      t.target = nearestVisibleEnemy(game.enemies, game.obstacles, t)
+      const beams = t.beamBuilder(t, game.beamTowerEls, game.beams)
       game.beams = game.beams.concat(beams)
       t.energy -= beams.reduce((sum, b) => sum + t.powerConsumptionOnIdle, 0)
     }
@@ -545,21 +545,21 @@ function buildBlockObstacles(bases: BaseEl[], grid: Grid): DefenceEl[] {
   return result
 }
 
-function buildPellets(tower: ProjectileTowerEl, enemies: DefenceEl[]): BulletEl[] {
+function buildPellets(tower: ProjectileTowerEl): BulletEl[] {
   return tower.target ? [{
     pos: position(tower.pos.cor, vectorTo(tower, tower.target, tower.bulletSpeed)),
     dim: unit(2), health: 1, drawing: pelletDrawing, power: tower.powerConsumption,
   }] : []
 }
 
-function buildLasers(tower: ProjectileTowerEl, enemies: DefenceEl[]): BulletEl[] {
+function buildLasers(tower: ProjectileTowerEl): BulletEl[] {
   return tower.target ? [{
     pos: position(tower.pos.cor, vectorTo(tower, tower.target, tower.bulletSpeed)),
     dim: unit(2), health: 1, drawing: laserDrawing, power: tower.powerConsumption,
   }] : []
 }
 
-function buildSparks(tower: BeamTowerEl, enemies: EnemyEl[], towers: TowerEl[], beams: BeamEl[]): BeamEl[] {
+function buildSparks(tower: BeamTowerEl, towers: TowerEl[], beams: BeamEl[]): BeamEl[] {
   return tower.energy > 0 ? towers
     .filter((t) => (t as BeamTowerEl).beamBuilder === buildSparks && t !== tower)
     .filter((t) => dist(tower, t) <= tower.radius)
@@ -570,7 +570,7 @@ function buildSparks(tower: BeamTowerEl, enemies: EnemyEl[], towers: TowerEl[], 
     })) : []
 }
 
-function buildRays(tower: BeamTowerEl, enemies: EnemyEl[], towers: TowerEl[], beams: BeamEl[]): BeamEl[] {
+function buildRays(tower: BeamTowerEl, towers: TowerEl[], beams: BeamEl[]): BeamEl[] {
   return tower.target && beams.filter((b) => b.start === tower).length === 0 ? [{
     id: id.next().value, start: tower, end: tower.target, powerSource: tower,
     range: tower.radius, drawing: rayDrawing, components: [],

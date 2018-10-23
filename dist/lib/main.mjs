@@ -162,17 +162,17 @@ const stopGameLoop = loop((step, gameTime) => {
         }
     });
     game.projectileTowerEls.map((t) => {
-        t.target = nearestVisibleEnemy(game.enemies, game.obstacles, t);
         if (t.energy > 0 && timeBasedTurn(`shoot-${t.id}`, t.fireRate)) {
-            const bullets = t.projectileBuilder(t, game.enemies);
+            t.target = nearestVisibleEnemy(game.enemies, game.obstacles, t);
+            const bullets = t.projectileBuilder(t);
             game.bullets = game.bullets.concat(bullets);
             t.energy -= bullets.reduce((sum, b) => sum + b.power, 0);
         }
     });
     game.beamTowerEls.map((t) => {
-        t.target = nearestVisibleEnemy(game.enemies, game.obstacles, t);
         if (t.energy > 0) {
-            const beams = t.beamBuilder(t, game.enemies, game.beamTowerEls, game.beams);
+            t.target = nearestVisibleEnemy(game.enemies, game.obstacles, t);
+            const beams = t.beamBuilder(t, game.beamTowerEls, game.beams);
             game.beams = game.beams.concat(beams);
             t.energy -= beams.reduce((sum, b) => sum + t.powerConsumptionOnIdle, 0);
         }
@@ -352,30 +352,6 @@ function canAccessAllBases(bases, enemies, spawnPoints, grid) {
 function randomXYZIn(dim) {
     return xyz(randomBetween(0, dim.x), randomBetween(0, dim.y), randomBetween(0, dim.z));
 }
-function* blockObstacleGenerator(bases, grid) {
-    const rand = () => snapToGridTileCenter(grid, randomXYZIn(grid.dim).sub(grid.dim2).mul(grid.tileSize));
-    while (true) {
-        let cor = rand();
-        const dim = TILE_SIZE.mul(unit(random([3, 5, 7, 9, 11])));
-        while (!cor || valueAtGrid(grid, cor) === 1 || !canAccessAllBases(bases, [], [], assignOnGrid(grid, cor, 1, dim))) {
-            cor = rand();
-        }
-        clearCache();
-        yield { pos: position(cor), dim, health: 1000 };
-    }
-}
-function buildBlockObstacles_(bases, grid) {
-    const fillage = 0.5, result = [], gridSize = grid.dim.mul(grid.tileSize), maxArea = gridSize.x * gridSize.y;
-    const blockObstacleGen = blockObstacleGenerator(bases, grid);
-    while (result.reduce((area, o) => area + o.dim.x * o.dim.y, 0) < maxArea * fillage) {
-        let no = blockObstacleGen.next();
-        while (result.reduce((r, o) => r || intersects(o, no.value), false)) {
-            no = blockObstacleGen.next();
-        }
-        result.push(no.value);
-    }
-    return result;
-}
 function buildBlockObstacles(bases, grid) {
     const fillage = 0.6, padding = xyz(8, 8).mul(grid.tileSize), gridSize = grid.dim.mul(grid.tileSize), maxAttempts = 200, maxArea = (gridSize.x - padding.x) * (gridSize.y - padding.y) * fillage, result = [];
     const randInGrid = () => randomXYZIn(grid.dim).sub(grid.dim2).mul(grid.tileSize);
@@ -397,19 +373,19 @@ function buildBlockObstacles(bases, grid) {
     }
     return result;
 }
-function buildPellets(tower, enemies) {
+function buildPellets(tower) {
     return tower.target ? [{
             pos: position(tower.pos.cor, vectorTo(tower, tower.target, tower.bulletSpeed)),
             dim: unit(2), health: 1, drawing: pelletDrawing, power: tower.powerConsumption,
         }] : [];
 }
-function buildLasers(tower, enemies) {
+function buildLasers(tower) {
     return tower.target ? [{
             pos: position(tower.pos.cor, vectorTo(tower, tower.target, tower.bulletSpeed)),
             dim: unit(2), health: 1, drawing: laserDrawing, power: tower.powerConsumption,
         }] : [];
 }
-function buildSparks(tower, enemies, towers, beams) {
+function buildSparks(tower, towers, beams) {
     return tower.energy > 0 ? towers
         .filter((t) => t.beamBuilder === buildSparks && t !== tower)
         .filter((t) => dist(tower, t) <= tower.radius)
@@ -419,7 +395,7 @@ function buildSparks(tower, enemies, towers, beams) {
         range: tower.radius, drawing: sparkDrawing, components: [],
     })) : [];
 }
-function buildRays(tower, enemies, towers, beams) {
+function buildRays(tower, towers, beams) {
     return tower.target && beams.filter((b) => b.start === tower).length === 0 ? [{
             id: id.next().value, start: tower, end: tower.target, powerSource: tower,
             range: tower.radius, drawing: rayDrawing, components: [],
